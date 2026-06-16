@@ -17,20 +17,25 @@ from ranking_divergence import (
     rank_wasserstein,
     rep_n,
 )
-from ranking_divergence.data import load_openwebtext_texts
+from ranking_divergence.data import (
+    DUO_OWT_CACHE_DIR,
+    OWT_HELDOUT_SPLIT,
+    OWT_SAMPLER_SOURCE_SPLIT,
+    load_openwebtext_texts,
+)
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--scorer-model", default="gpt2-large")
     parser.add_argument("--generator-model", default="gpt2")
-    parser.add_argument("--cache-dir", default=None)
-    parser.add_argument("--reference-split", default="train[-100000:]")
-    parser.add_argument("--sampler-source-split", default="train[:-100000]")
+    parser.add_argument("--cache-dir", default=DUO_OWT_CACHE_DIR)
+    parser.add_argument("--reference-split", default=OWT_HELDOUT_SPLIT)
+    parser.add_argument("--sampler-source-split", default=OWT_SAMPLER_SOURCE_SPLIT)
     parser.add_argument("--num-reference", type=int, default=32)
     parser.add_argument("--num-sampler-source", type=int, default=2048)
     parser.add_argument("--num-samples", type=int, default=16)
-    parser.add_argument("--sample-length", type=int, default=128)
+    parser.add_argument("--sample-length", type=int, default=1024)
     parser.add_argument("--batch-size", type=int, default=2)
     parser.add_argument("--top-k", type=int, default=64)
     parser.add_argument("--mirror-k", type=int, default=5000)

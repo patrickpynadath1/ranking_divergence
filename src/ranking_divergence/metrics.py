@@ -35,6 +35,65 @@ def empirical_entropy(
     return float(-(probs * probs.log()).sum().item())
 
 
+def per_sample_unigram_entropy(
+    texts: str | Sequence[str],
+    tokenizer=None,
+    *,
+    token_ids: Sequence[Sequence[int]] | None = None,
+) -> float:
+    """Average per-sample empirical unigram entropy in nats."""
+
+    if token_ids is None:
+        if tokenizer is None:
+            raise ValueError("Pass tokenizer or token_ids.")
+        token_ids = _tokenize_texts(texts, tokenizer)
+
+    values: list[float] = []
+    for ids in token_ids:
+        counts = Counter(ids)
+        total = sum(counts.values())
+        if total == 0:
+            values.append(0.0)
+            continue
+        probs = torch.tensor(list(counts.values()), dtype=torch.float64) / total
+        values.append(float(-(probs * probs.log()).sum().item()))
+    return float(sum(values) / len(values)) if values else 0.0
+
+
+def unique_ngram_ratios(
+    texts: str | Sequence[str],
+    tokenizer=None,
+    *,
+    n: int = 3,
+    token_ids: Sequence[Sequence[int]] | None = None,
+) -> dict[str, float]:
+    """Return per-sample and corpus-level unique n-gram ratios."""
+
+    if n <= 0:
+        raise ValueError("n must be positive.")
+    if token_ids is None:
+        if tokenizer is None:
+            raise ValueError("Pass tokenizer or token_ids.")
+        token_ids = _tokenize_texts(texts, tokenizer)
+
+    sample_values: list[float] = []
+    corpus_grams: Counter[tuple[int, ...]] = Counter()
+    corpus_windows = 0
+    for ids in token_ids:
+        windows = len(ids) - n + 1
+        if windows <= 0:
+            continue
+        grams = [tuple(ids[i : i + n]) for i in range(windows)]
+        sample_values.append(len(set(grams)) / windows)
+        corpus_grams.update(grams)
+        corpus_windows += windows
+
+    return {
+        "sample": float(sum(sample_values) / len(sample_values)) if sample_values else 0.0,
+        "corpus": float(len(corpus_grams) / corpus_windows) if corpus_windows else 0.0,
+    }
+
+
 def rep_n(
     texts: str | Sequence[str],
     tokenizer=None,

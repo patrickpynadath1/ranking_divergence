@@ -1,21 +1,42 @@
 import math
+import sys
+import types
 
 import torch
 import pytest
 
 from ranking_divergence import (
     MirrorSampler,
+    PeriodicSampler,
+    PhraseBankSampler,
     RestrictedMarginalSampler,
     empirical_entropy,
+    per_sample_unigram_entropy,
     rank_histogram,
     rank_wasserstein_from_histograms,
     rep_n,
+    unique_ngram_ratios,
+)
+from ranking_divergence.data import (
+    DUO_OWT_CACHE_DIR,
+    OWT_HELDOUT_SPLIT,
+    OWT_SAMPLER_SOURCE_SPLIT,
+    load_openwebtext_texts,
+    openwebtext_split_config,
 )
 
 
 class FakeTokenizer:
     pad_token_id = 0
     eos_token = "<eos>"
+
+    def encode(self, text, add_special_tokens=False):
+        del add_special_tokens
+        return [int(token) for token in text.split()] if text else []
+
+    def batch_decode(self, samples, skip_special_tokens=True):
+        del skip_special_tokens
+        return [" ".join(map(str, sample)) for sample in samples]
 
     def __call__(
         self,
@@ -107,15 +128,72 @@ def test_empirical_entropy_uses_nats():
     assert value == pytest.approx(math.log(2.0))
 
 
-def test_mirror_sampler_returns_requested_odd_length():
-    class Tokenizer:
-        def batch_decode(self, samples, skip_special_tokens=True):
-            return [" ".join(map(str, sample)) for sample in samples]
+def test_per_sample_unigram_entropy_averages_samples():
+    value = per_sample_unigram_entropy("", token_ids=[[1, 1, 2, 2], [3, 3, 3, 3]])
+    assert value == pytest.approx(math.log(2.0) / 2.0)
 
+
+def test_unique_ngram_ratios_are_hand_computable():
+    ratios = unique_ngram_ratios("", token_ids=[[1, 2, 1], [1, 2, 3]], n=2)
+    assert ratios["sample"] == pytest.approx((1.0 + 1.0) / 2.0)
+    assert ratios["corpus"] == pytest.approx(3.0 / 4.0)
+
+
+def test_mirror_sampler_returns_requested_odd_length():
     base = RestrictedMarginalSampler(
         torch.tensor([1, 2]),
         torch.tensor([0.5, 0.5], dtype=torch.float64),
-        Tokenizer(),
+        FakeTokenizer(),
     )
     sample = MirrorSampler(base).sample_token_ids(num_samples=1, length=5, seed=0)[0]
     assert len(sample) == 5
+    assert sample == list(reversed(sample))
+
+
+def test_samplers_are_deterministic_on_tiny_text():
+    texts = ["1 2 2 3 3 3", "4 4 4 4"]
+    tokenizer = FakeTokenizer()
+
+    topk = RestrictedMarginalSampler.from_texts(texts, tokenizer, k=2)
+    assert topk.sample_token_ids(num_samples=2, length=4, seed=7) == topk.sample_token_ids(
+        num_samples=2,
+        length=4,
+        seed=7,
+    )
+
+    periodic = PeriodicSampler.from_texts(texts, tokenizer, k=3)
+    assert periodic.sample_token_ids(num_samples=1, length=5) == [[4, 3, 2, 4, 3]]
+
+    phrase = PhraseBankSampler.from_texts(texts, tokenizer, n=2, m=2)
+    sample = phrase.sample_token_ids(num_samples=1, length=5, seed=3)[0]
+    assert len(sample) == 5
+
+
+def test_openwebtext_split_config_defaults():
+    config = openwebtext_split_config()
+    assert config["sampler_source_split"] == OWT_SAMPLER_SOURCE_SPLIT
+    assert config["heldout_split"] == OWT_HELDOUT_SPLIT
+    assert config["cache_dir"] == DUO_OWT_CACHE_DIR
+
+
+def test_load_openwebtext_texts_uses_requested_split_and_cache(monkeypatch):
+    calls = []
+
+    def load_dataset(*args, **kwargs):
+        calls.append((args, kwargs))
+        return [{"text": "first"}, {"text": "second"}]
+
+    monkeypatch.setitem(sys.modules, "datasets", types.SimpleNamespace(load_dataset=load_dataset))
+    texts = load_openwebtext_texts(split="train[-100000:]", cache_dir="/tmp/owt", limit=1)
+    assert texts == ["first"]
+    assert calls == [
+        (
+            ("openwebtext",),
+            {
+                "split": "train[-100000:]",
+                "cache_dir": "/tmp/owt",
+                "streaming": False,
+                "trust_remote_code": True,
+            },
+        )
+    ]

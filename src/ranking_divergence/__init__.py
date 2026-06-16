@@ -12,7 +12,9 @@ from .baselines import (
 from .metrics import (
     empirical_entropy,
     generative_perplexity,
+    per_sample_unigram_entropy,
     rep_n,
+    unique_ngram_ratios,
 )
 from .rank import (
     RankDivergenceResult,
@@ -34,10 +36,12 @@ __all__ = [
     "empirical_entropy",
     "generative_perplexity",
     "normalize_histogram",
+    "per_sample_unigram_entropy",
     "rank_histogram",
     "rank_histogram_from_dataloader",
     "rank_wasserstein",
     "rank_wasserstein_from_histograms",
     "rep_n",
     "token_frequencies",
+    "unique_ngram_ratios",
 ]

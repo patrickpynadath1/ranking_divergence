@@ -78,7 +78,7 @@ class MirrorSampler:
     base_sampler: RestrictedMarginalSampler
 
     def sample_token_ids(self, *, num_samples: int, length: int, seed: int | None = None) -> list[list[int]]:
-        half = max(1, length // 2)
+        half = max(1, (length + 1) // 2)
         first_halves = self.base_sampler.sample_token_ids(
             num_samples=num_samples,
             length=half,
@@ -86,10 +86,8 @@ class MirrorSampler:
         )
         samples = []
         for ids in first_halves:
-            repeated = []
-            while len(repeated) < length:
-                repeated.extend(ids)
-            samples.append(repeated[:length])
+            reflected_tail = list(reversed(ids[: length // 2]))
+            samples.append((ids + reflected_tail)[:length])
         return samples
 
     def sample(self, *, num_samples: int, length: int, seed: int | None = None) -> list[str]:
