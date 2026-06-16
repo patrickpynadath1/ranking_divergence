@@ -15,6 +15,8 @@ def test_openwebtext_analysis_cli_defaults_to_plan_values():
     assert args.sample_length == 1024
     assert args.scorer_model == "gpt2-large"
     assert args.generator_model == "gpt2"
+    assert args.temperature == 1.0
+    assert args.top_p == 1.0
     assert args.top_k == 64
     assert args.mirror_k == 5000
     assert args.periodic_k == 400

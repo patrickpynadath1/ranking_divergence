@@ -180,3 +180,76 @@ def generative_perplexity(
     if total_tokens == 0:
         raise ValueError("No valid next-token positions found.")
     return float(torch.exp(torch.tensor(total_loss / total_tokens)).item())
+
+
+@torch.inference_mode()
+def duo_generative_perplexity(
+    texts: str | Sequence[str],
+    model,
+    tokenizer,
+    *,
+    batch_size: int = 8,
+    max_length: int,
+    device: str | torch.device | None = None,
+    show_progress: bool = False,
+) -> float:
+    """DUO-style generative perplexity for decoded samples.
+
+    DUO re-tokenizes decoded samples with the scorer tokenizer, truncates/pads
+    to ``max_length``, chunks by the scorer context, includes the first EOS in
+    the loss, and ignores subsequent EOS positions.
+    """
+
+    samples = [texts] if isinstance(texts, str) else list(texts)
+    if not samples:
+        raise ValueError("At least one text sample is required.")
+    if tokenizer.pad_token_id is None:
+        tokenizer.pad_token = tokenizer.eos_token
+    if device is None:
+        device = next(model.parameters()).device
+    device = torch.device(device)
+    model = model.to(device)
+    model.eval()
+
+    total_loss = 0.0
+    total_tokens = 0
+    eval_context_size = min(max_length, int(getattr(model.config, "n_positions", max_length)))
+    iterator = range(0, len(samples), batch_size)
+    if show_progress:
+        iterator = tqdm(iterator, desc="gen-ppl")
+
+    for start in iterator:
+        encoded = tokenizer(
+            samples[start : start + batch_size],
+            return_tensors="pt",
+            padding=True,
+            truncation=True,
+            max_length=max_length,
+            return_attention_mask=True,
+        )
+        input_ids = encoded["input_ids"].to(device)
+        attention_mask = encoded["attention_mask"].to(device)
+        if input_ids.shape[1] < 2:
+            continue
+
+        for sample_chunk, mask_chunk in zip(
+            torch.split(input_ids, eval_context_size, dim=-1),
+            torch.split(attention_mask, eval_context_size, dim=-1),
+        ):
+            if sample_chunk.shape[1] < 2:
+                continue
+            logits = model(input_ids=sample_chunk, attention_mask=mask_chunk).logits
+            losses = F.cross_entropy(
+                logits[:, :-1, :].reshape(-1, logits.shape[-1]),
+                sample_chunk[:, 1:].reshape(-1),
+                reduction="none",
+            ).reshape(sample_chunk[:, 1:].shape)
+            first_eos = (sample_chunk == tokenizer.eos_token_id).cumsum(dim=-1) == 1
+            token_mask = sample_chunk != tokenizer.eos_token_id
+            valid = (first_eos[:, 1:] | token_mask[:, 1:]) & mask_chunk[:, 1:].bool()
+            total_loss += float(losses[valid].sum().item())
+            total_tokens += int(valid.sum().item())
+
+    if total_tokens == 0:
+        raise ValueError("No valid next-token positions found.")
+    return float(torch.exp(torch.tensor(total_loss / total_tokens)).item())

@@ -10,6 +10,7 @@ from .baselines import (
     token_frequencies,
 )
 from .metrics import (
+    duo_generative_perplexity,
     empirical_entropy,
     generative_perplexity,
     per_sample_unigram_entropy,
@@ -33,6 +34,7 @@ __all__ = [
     "RestrictedMarginalSampler",
     "TopKSampler",
     "build_phrase_bank",
+    "duo_generative_perplexity",
     "empirical_entropy",
     "generative_perplexity",
     "normalize_histogram",

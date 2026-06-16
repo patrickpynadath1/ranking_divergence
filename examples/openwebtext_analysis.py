@@ -17,7 +17,7 @@ from ranking_divergence import (
     PeriodicSampler,
     PhraseBankSampler,
     RestrictedMarginalSampler,
-    generative_perplexity,
+    duo_generative_perplexity,
     per_sample_unigram_entropy,
     rank_histogram,
     rank_wasserstein_from_histograms,
@@ -46,7 +46,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--batch-size", type=int, default=2)
     parser.add_argument("--seed", type=int, default=13)
     parser.add_argument("--temperature", type=float, default=1.0)
-    parser.add_argument("--top-p", type=float, default=0.95)
+    parser.add_argument("--top-p", type=float, default=1.0)
     parser.add_argument("--top-k", type=int, default=64)
     parser.add_argument("--mirror-k", type=int, default=5000)
     parser.add_argument("--periodic-k", type=int, default=400)
@@ -93,19 +93,33 @@ def generate_model_token_ids(
     torch.manual_seed(seed)
     model = model.to(device).eval()
     input_ids = torch.full((num_samples, 1), tokenizer.eos_token_id, dtype=torch.long, device=device)
+    attention_mask = torch.ones_like(input_ids)
     output = model.generate(
         input_ids=input_ids,
+        attention_mask=attention_mask,
         max_new_tokens=length,
         do_sample=True,
         top_p=top_p,
+        top_k=0,
         temperature=temperature,
         pad_token_id=tokenizer.eos_token_id,
     )
-    return output[:, 1:].detach().cpu().tolist()
+    samples = output[:, 1:].detach().cpu().tolist()
+    eos_token_id = tokenizer.eos_token_id
+    if eos_token_id is None:
+        return samples
+
+    trimmed_samples: list[list[int]] = []
+    for sample in samples:
+        if eos_token_id in sample:
+            eos_index = sample.index(eos_token_id)
+            sample = sample[: eos_index + 1]
+        trimmed_samples.append(sample)
+    return trimmed_samples
 
 
-def decode_token_ids(tokenizer, token_ids: Sequence[Sequence[int]]) -> list[str]:
-    return tokenizer.batch_decode(token_ids, skip_special_tokens=True)
+def decode_token_ids(tokenizer, token_ids: Sequence[Sequence[int]], *, skip_special_tokens: bool = False) -> list[str]:
+    return tokenizer.batch_decode(token_ids, skip_special_tokens=skip_special_tokens)
 
 
 def write_text_samples(path: Path, texts: Sequence[str]) -> None:
@@ -139,7 +153,7 @@ def candidate_metrics(
     row: dict[str, float | str] = {
         "name": name,
         "unigram_entropy": per_sample_unigram_entropy(texts, tokenizer, token_ids=token_ids),
-        "gen_ppl": generative_perplexity(
+        "gen_ppl": duo_generative_perplexity(
             texts,
             scorer,
             tokenizer,
@@ -359,6 +373,10 @@ def main(argv: Sequence[str] | None = None) -> None:
         "generator_model": args.generator_model,
         "temperature": args.temperature,
         "top_p": args.top_p,
+        "generator_top_k": 0,
+        "generator_do_sample": True,
+        "generator_eos_token_id": generator_tokenizer.eos_token_id,
+        "generator_stops_at_eos": True,
         "sampler_parameters": {
             "top_k": args.top_k,
             "mirror_k": args.mirror_k,
@@ -379,9 +397,10 @@ def main(argv: Sequence[str] | None = None) -> None:
     full_metrics = {"metadata": metadata, "metrics": []}
     for name, ids in candidates.items():
         print(f"Evaluating {name}...")
-        texts = decode_token_ids(tokenizer, ids)
+        texts = decode_token_ids(tokenizer, ids, skip_special_tokens=False)
+        display_texts = decode_token_ids(tokenizer, ids, skip_special_tokens=True)
         slug = slugify(name)
-        write_text_samples(sample_dir / f"{slug}.txt", texts)
+        write_text_samples(sample_dir / f"{slug}.txt", display_texts)
         write_json(token_dir / f"{slug}.json", ids)
         row = candidate_metrics(
             name=name,

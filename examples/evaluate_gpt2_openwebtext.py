@@ -59,15 +59,24 @@ def generate_model_samples(model, tokenizer, *, num_samples: int, length: int, d
     torch.manual_seed(seed)
     model = model.to(device).eval()
     input_ids = torch.full((num_samples, 1), tokenizer.eos_token_id, dtype=torch.long, device=device)
+    attention_mask = torch.ones_like(input_ids)
     output = model.generate(
         input_ids=input_ids,
+        attention_mask=attention_mask,
         max_new_tokens=length,
         do_sample=True,
-        top_p=0.95,
+        top_p=1.0,
+        top_k=0,
         temperature=1.0,
         pad_token_id=tokenizer.eos_token_id,
     )
-    return tokenizer.batch_decode(output[:, 1:], skip_special_tokens=True)
+    samples = output[:, 1:].detach().cpu().tolist()
+    trimmed_samples = []
+    for sample in samples:
+        if tokenizer.eos_token_id in sample:
+            sample = sample[: sample.index(tokenizer.eos_token_id) + 1]
+        trimmed_samples.append(sample)
+    return tokenizer.batch_decode(trimmed_samples, skip_special_tokens=True)
 
 
 def evaluate_candidate(name: str, texts: list[str], reference_texts: list[str], scorer, tokenizer, args) -> dict:
