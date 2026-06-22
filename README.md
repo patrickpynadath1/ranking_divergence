@@ -28,6 +28,61 @@ result = rank_wasserstein(
 print(result.distance)
 ```
 
+## Results
+
+The full numerical discussion is in
+[docs/important_results.md](docs/important_results.md). The main result is that
+rank-Wasserstein favors an intermediate generation regime: it penalizes both
+low-temperature repetitive collapse and high-temperature unlikely token
+choices.
+
+### Autoregressive temperature sweep
+
+The AR sweep has a clear V-shaped rank-distance curve. At temperature 0.60,
+rank-Wasserstein is 0.978 and Rep-3 is 0.593; the best match occurs at
+temperature 0.90 with rank-Wasserstein 0.0261; by temperature 1.00 the distance
+rises to 0.610.
+
+![AR entropy, generative perplexity, and rank-Wasserstein across temperature](docs/figures/ar_metric_summary.png)
+
+### Diffusion model sweeps
+
+MDLM, CANDI, and DUO show the same broad behavior: low-temperature
+concentration and high-temperature distributional drift both worsen the rank
+match. DUO gives the strongest results, reaching rank-Wasserstein 0.0239 at NFE
+32 and temperature 0.625.
+
+![MDLM temperature and NFE sweep](docs/figures/mdlm_metric_summary.png)
+
+![CANDI temperature and NFE sweep](docs/figures/candi_metric_summary.png)
+
+![DUO temperature and NFE sweep](docs/figures/duo_metric_summary.png)
+
+### Cross-method comparison
+
+The following summary selects the temperature with the lowest rank-Wasserstein
+for each method and NFE. AR is shown at the requested comparison cost of NFE
+128.
+
+![Entropy, generative perplexity, and rank-Wasserstein across methods and NFE](docs/figures/all_metrics_efficiency_summary.png)
+
+The efficiency frontier is formed by DUO at NFE 8, 16, and 32. DUO at NFE 32
+slightly outperforms both DUO and AR at NFE 128.
+
+![Rank-Wasserstein efficiency Pareto frontier](docs/figures/rank_wasserstein_efficiency_pareto.png)
+
+### Parameter-free baselines
+
+The parameter-free samplers were evaluated with 128 generations each. Periodic
+is the strongest of these baselines at rank-Wasserstein 1.092, but remains much
+farther from the held-out rank distribution than the learned models.
+
+![Parameter-free sampler entropy, generative perplexity, and rank-Wasserstein](docs/figures/parameter_free_metrics_summary.png)
+
+### Metric tradeoffs
+
+![All configurations plotted across entropy, generative perplexity, and rank-Wasserstein](docs/figures/all_metric_tradeoffs.png)
+
 ## Install
 
 ```bash
@@ -39,6 +94,103 @@ For the OpenWebText analysis scripts:
 ```bash
 uv pip install -e ".[examples]"
 ```
+
+## Use From Another Local Project
+
+In theory, this repository should work as an editable dependency in another
+local project because it uses a standard Python `src/` layout and is managed
+with uv. This is one of the main reasons to use uv: local packages,
+environments, dependency resolution, and lockfiles can be managed through one
+consistent workflow.
+
+The intended workflow from another uv-managed project is:
+
+```bash
+cd /path/to/another-project
+uv init  # omit this if the project already has a pyproject.toml
+uv add --editable /home/patrick/ranking-divergence
+```
+
+The package should then be importable normally:
+
+```python
+from ranking_divergence import (
+    rank_wasserstein,
+    score_token_ids,
+    unique_ngram_ratios,
+)
+```
+
+You can check which checkout is being imported with:
+
+```bash
+uv run python -c \
+  "import ranking_divergence; print(ranking_divergence.__file__)"
+```
+
+For an editable installation, this should print a path under:
+
+```text
+/home/patrick/ranking-divergence/src/ranking_divergence/
+```
+
+The consumer project's `pyproject.toml` should contain an editable path source
+similar to:
+
+```toml
+[project]
+dependencies = [
+    "ranking-divergence",
+]
+
+[tool.uv.sources]
+ranking-divergence = {
+    path = "/home/patrick/ranking-divergence",
+    editable = true,
+}
+```
+
+### Choosing a PyTorch backend
+
+The package itself does not require a particular CUDA version. Replace the
+PyTorch version, uv index name, and index URL below with the CUDA version
+supported by your machine. This example uses CUDA 12.1 because that is what the
+current experiment server supports:
+
+```toml
+[project]
+dependencies = [
+    "ranking-divergence",
+    "torch==2.5.1",
+]
+
+[tool.uv.sources]
+ranking-divergence = {
+    path = "/home/patrick/ranking-divergence",
+    editable = true,
+}
+torch = [{ index = "pytorch-cu121" }]
+
+[[tool.uv.index]]
+name = "pytorch-cu121"
+url = "https://download.pytorch.org/whl/cu121"
+explicit = true
+```
+
+After editing dependency configuration, synchronize and verify the selected
+backend:
+
+```bash
+uv sync
+uv run python -c \
+  "import torch; print(torch.__version__, torch.version.cuda, torch.cuda.is_available())"
+```
+
+On the current experiment server, the expected environment is PyTorch
+`2.5.1+cu121`, CUDA runtime `12.1`, and `True` for CUDA availability. For
+another machine, replace `2.5.1`, `cu121`, and the PyTorch index URL with the
+corresponding compatible versions. CPU-only and Apple Silicon projects should
+use their appropriate PyTorch configuration instead.
 
 ## What Is Included
 
@@ -128,20 +280,7 @@ is substantially implemented:
   needs generated text or token sequences.
 
 The current package is therefore a working prototype of the rank-divergence idea,
-with an OpenWebText/GPT-2 analysis harness layered on top. It is not yet a fully
-validated paper-grade reproduction.
-
-## TODO / Known Risks
-
-- Validate the OpenWebText pipeline against DUO outputs on a sufficiently large
-  run, not just smoke tests.
-- Investigate why `gpt2` scored by `gpt2-large` may underperform naive baselines
-  in current OpenWebText analysis outputs, both on ranking and gen ppl / entropy. This should not be happening and is
-  most likely a bug in generation, token handling, evaluation masking, metric
-  aggregation, sample size, or baseline comparability.
-- Cache and optionally reuse the held-out reference rank histogram across runs.
-- Consider a token-ID-first evaluation mode for rank histograms and gen-PPL to
-  avoid decode/re-tokenize drift when the generator and scorer tokenizers match.
+with an OpenWebText/GPT-2 analysis harness layered on top.
 
 ## Development
 
